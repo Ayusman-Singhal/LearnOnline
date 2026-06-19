@@ -32,4 +32,22 @@ router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
   } catch (err) { next(err) }
 })
 
+// POST /api/uploads/from-url — fetch external image URL and re-host on Cloudinary
+router.post('/from-url', requireAuth, async (req, res, next) => {
+  try {
+    const { url, folder = 'learnonline/thumbnails' } = req.body
+    if (!url) return res.status(400).json({ error: 'url required' })
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    if (!response.ok) return res.status(400).json({ error: `Fetch failed: ${response.status}` })
+
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.startsWith('image/')) return res.status(400).json({ error: 'URL is not an image' })
+
+    const buffer = Buffer.from(await response.arrayBuffer())
+    const result = await uploadToCloudinary(buffer, { folder, resource_type: 'image' })
+    res.json({ url: result.secure_url, public_id: result.public_id })
+  } catch (err) { next(err) }
+})
+
 module.exports = router

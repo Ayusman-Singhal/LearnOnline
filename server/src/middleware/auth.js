@@ -10,13 +10,32 @@ async function requireAuth(req, res, next) {
     const token = authHeader.slice(7)
     const { sub: clerkId } = await clerkClient.verifyToken(token)
 
-    const { data: user, error } = await supabase
+    let { data: user } = await supabase
       .from('users')
       .select('*')
       .eq('clerk_id', clerkId)
-      .single()
+      .maybeSingle()
 
-    if (error || !user) return res.status(401).json({ error: 'User not found' })
+    // Webhook may not be configured yet — auto-create user on first API call
+    if (!user) {
+      const clerkUser = await clerkClient.users.getUser(clerkId)
+      const email = clerkUser.emailAddresses?.[0]?.emailAddress
+      const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim()
+      const { data: created, error } = await supabase
+        .from('users')
+        .upsert({
+          clerk_id: clerkId,
+          email,
+          name,
+          avatar_url: clerkUser.imageUrl,
+          role: 'student',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'clerk_id' })
+        .select()
+        .single()
+      if (error || !created) return res.status(500).json({ error: 'Failed to create user' })
+      user = created
+    }
 
     req.user = user
     next()

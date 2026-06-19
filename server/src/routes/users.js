@@ -6,6 +6,43 @@ const supabase = require('../lib/supabase')
 // GET /api/users/me
 router.get('/me', requireAuth, (req, res) => res.json(req.user))
 
+// PATCH /api/users/me/profile — update display name and/or avatar
+router.patch('/me/profile', requireAuth, async (req, res, next) => {
+  try {
+    const { name, avatar_url } = req.body
+    const updates = {}
+    if (name !== undefined && name.trim()) updates.name = name.trim()
+    if (avatar_url !== undefined) updates.avatar_url = avatar_url
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' })
+    const { data, error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', req.user.id)
+      .select()
+      .single()
+    if (error) throw error
+    res.json(data)
+  } catch (err) { next(err) }
+})
+
+// PATCH /api/users/me/role — self-update: student ↔ instructor only
+router.patch('/me/role', requireAuth, async (req, res, next) => {
+  try {
+    const { role } = req.body
+    if (!['student', 'instructor'].includes(role)) {
+      return res.status(400).json({ error: 'Can only switch between student and instructor' })
+    }
+    const { data, error } = await supabase
+      .from('users')
+      .update({ role })
+      .eq('id', req.user.id)
+      .select()
+      .single()
+    if (error) throw error
+    res.json(data)
+  } catch (err) { next(err) }
+})
+
 // GET /api/users — admin only
 router.get('/', requireAuth, requireRole('admin'), async (_req, res, next) => {
   try {

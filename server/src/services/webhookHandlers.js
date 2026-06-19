@@ -1,12 +1,14 @@
 const supabase = require('../lib/supabase')
 
-async function onPaymentCaptured(payload) {
-  const payment = payload.payment.entity
-  const { order_id, id: payment_id, amount, notes } = payment
-  const { course_id, student_id, instructor_id, coupon_id } = notes || {}
+async function onPaymentSucceeded(paymentIntent) {
+  const { id: payment_intent_id, amount, metadata } = paymentIntent
+  const { course_id, student_id, instructor_id, coupon_id } = metadata || {}
 
   // Create enrollment
-  await supabase.from('enrollments').upsert({ student_id, course_id, payment_id, status: 'active' }, { onConflict: 'student_id,course_id' })
+  await supabase.from('enrollments').upsert(
+    { student_id, course_id, payment_id: payment_intent_id, status: 'active' },
+    { onConflict: 'student_id,course_id' }
+  )
 
   const gross = amount / 100
   const platform_fee = +(gross * 0.12).toFixed(2)
@@ -14,8 +16,7 @@ async function onPaymentCaptured(payload) {
 
   // Record platform fee
   const { data: fee } = await supabase.from('platform_fees').insert({
-    order_id,
-    payment_id,
+    payment_id: payment_intent_id,
     course_id,
     student_id,
     instructor_id,
@@ -27,45 +28,50 @@ async function onPaymentCaptured(payload) {
 
   // Mark coupon used
   if (coupon_id) {
-    await supabase.from('coupon_uses').insert({ coupon_id, student_id, payment_id })
+    await supabase.from('coupon_uses').insert({ coupon_id, student_id, payment_id: payment_intent_id })
   }
 
-  console.log('payment.captured processed', { payment_id, fee: fee?.id })
+  console.log('payment_intent.succeeded processed', { payment_intent_id, fee: fee?.id })
 }
 
-async function onPaymentFailed(payload) {
-  const payment = payload.payment.entity
-  console.log('payment.failed', payment.id)
+async function onPaymentFailed(paymentIntent) {
+  console.log('payment_intent.payment_failed', paymentIntent.id)
 }
 
-async function onRefundCreated(payload) {
-  const refund = payload.refund.entity
-  const { payment_id } = refund
+async function onChargeRefunded(charge) {
+  const { payment_intent: payment_intent_id } = charge
 
   // Revoke enrollment
-  await supabase.from('enrollments').update({ status: 'refunded' }).eq('payment_id', payment_id)
+  await supabase.from('enrollments').update({ status: 'refunded' }).eq('payment_id', payment_intent_id)
 
   // Update fee status
-  await supabase.from('platform_fees').update({ status: 'refunded' }).eq('payment_id', payment_id)
+  await supabase.from('platform_fees').update({ status: 'refunded' }).eq('payment_id', payment_intent_id)
 
   // Mark transfer reversed
-  await supabase.from('instructor_transfers').update({ status: 'reversed' }).eq('payment_id', payment_id)
+  await supabase.from('instructor_transfers').update({ status: 'reversed' }).eq('payment_id', payment_intent_id)
 
-  console.log('refund.created processed', payment_id)
+  console.log('charge.refunded processed', payment_intent_id)
 }
 
-async function onTransferProcessed(payload) {
-  const transfer = payload.transfer.entity
+async function onTransferPaid(transfer) {
   await supabase.from('instructor_transfers')
     .update({ status: 'settled', settled_at: new Date().toISOString() })
     .eq('transfer_id', transfer.id)
 }
 
-async function onTransferFailed(payload) {
-  const transfer = payload.transfer.entity
+async function onTransferFailed(transfer) {
   await supabase.from('instructor_transfers').update({ status: 'failed' }).eq('transfer_id', transfer.id)
-  // TODO: alert admin (Phase 14 notifications)
   console.error('transfer.failed', transfer.id)
 }
 
-module.exports = { onPaymentCaptured, onPaymentFailed, onRefundCreated, onTransferProcessed, onTransferFailed }
+async function onAccountUpdated(account) {
+  if (!account.metadata?.user_id) return
+  const status = account.charges_enabled ? 'active' : 'pending'
+  await supabase
+    .from('instructors')
+    .update({ stripe_onboard_status: status })
+    .eq('stripe_account_id', account.id)
+  console.log('account.updated', account.id, status)
+}
+
+module.exports = { onPaymentSucceeded, onPaymentFailed, onChargeRefunded, onTransferPaid, onTransferFailed, onAccountUpdated }

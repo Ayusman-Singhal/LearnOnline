@@ -5,7 +5,10 @@ const supabase = require('../lib/supabase')
 
 router.get('/', async (_req, res, next) => {
   try {
-    const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false })
+    const { data, error } = await supabase
+      .from('announcements')
+      .select('*, users!announcements_author_id_fkey(name, avatar_url)')
+      .order('created_at', { ascending: false })
     if (error) throw error
     res.json(data)
   } catch (err) { next(err) }
@@ -13,8 +16,12 @@ router.get('/', async (_req, res, next) => {
 
 router.post('/', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
-    const { title, body, target_role } = req.body
-    const { data, error } = await supabase.from('announcements').insert({ title, body, target_role, created_by: req.user.id }).select().single()
+    const { title, body, target_role = 'all' } = req.body
+    if (!title?.trim() || !body?.trim()) return res.status(400).json({ error: 'title and body required' })
+    const { data, error } = await supabase
+      .from('announcements')
+      .insert({ title, body, target_role, author_id: req.user.id })
+      .select().single()
     if (error) throw error
     res.status(201).json(data)
   } catch (err) { next(err) }

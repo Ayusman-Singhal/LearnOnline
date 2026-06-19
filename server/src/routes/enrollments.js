@@ -19,11 +19,21 @@ router.get('/my', requireAuth, async (req, res, next) => {
 // Instructor: students enrolled in my courses
 router.get('/instructor', requireAuth, requireRole('instructor', 'admin'), async (req, res, next) => {
   try {
+    // Get instructor's course IDs first
+    const { data: courses } = await supabase
+      .from('courses')
+      .select('id, title')
+      .eq('instructor_id', req.user.id)
+
+    const courseIds = courses?.map((c) => c.id) || []
+    if (!courseIds.length) return res.json([])
+
     const { data, error } = await supabase
       .from('enrollments')
       .select('*, users!enrollments_student_id_fkey(name, email, avatar_url), courses(title)')
-      .eq('courses.instructor_id', req.user.id)
+      .in('course_id', courseIds)
       .eq('status', 'active')
+      .order('enrolled_at', { ascending: false })
     if (error) throw error
     res.json(data)
   } catch (err) { next(err) }

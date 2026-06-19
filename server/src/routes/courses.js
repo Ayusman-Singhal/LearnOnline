@@ -23,12 +23,37 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err) }
 })
 
-// Public: single course
+// Instructor: own courses (any status)
+router.get('/mine', requireAuth, requireRole('instructor', 'admin'), async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from('courses')
+      .select('*, categories(name)')
+      .eq('instructor_id', req.user.id)
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    res.json(data)
+  } catch (err) { next(err) }
+})
+
+// Admin: list all courses (any status)
+router.get('/admin/all', requireAuth, requireRole('admin'), async (req, res, next) => {
+  try {
+    const { data, error } = await supabase
+      .from('courses')
+      .select('*, categories(name), users!courses_instructor_id_fkey(name)')
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    res.json(data)
+  } catch (err) { next(err) }
+})
+
+// Public: single course with lessons
 router.get('/:id', async (req, res, next) => {
   try {
     const { data, error } = await supabase
       .from('courses')
-      .select('*, categories(name), users!courses_instructor_id_fkey(id, name, avatar_url), lessons(id, title, order, is_free_preview)')
+      .select('*, categories(name), users!courses_instructor_id_fkey(id, name, avatar_url), lessons(id, title, type, content_url, sort_order, is_free, duration_mins)')
       .eq('id', req.params.id)
       .single()
     if (error) throw error
@@ -40,8 +65,9 @@ router.get('/:id', async (req, res, next) => {
 router.post('/', requireAuth, requireRole('instructor', 'admin'), async (req, res, next) => {
   try {
     const { title, description, category_id, price, thumbnail_url } = req.body
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') + '-' + Date.now()
     const { data, error } = await supabase.from('courses').insert({
-      title, description, category_id, price, thumbnail_url,
+      title, slug, description, category_id, price, thumbnail_url,
       instructor_id: req.user.id,
       status: 'draft',
     }).select().single()
@@ -54,8 +80,9 @@ router.post('/', requireAuth, requireRole('instructor', 'admin'), async (req, re
 router.put('/:id', requireAuth, requireRole('instructor', 'admin'), async (req, res, next) => {
   try {
     const { title, description, category_id, price, thumbnail_url, status } = req.body
-    // Instructors can only edit own courses
-    let query = supabase.from('courses').update({ title, description, category_id, price, thumbnail_url, status }).eq('id', req.params.id)
+    let query = supabase.from('courses')
+      .update({ title, description, category_id, price, thumbnail_url, status })
+      .eq('id', req.params.id)
     if (req.user.role === 'instructor') query = query.eq('instructor_id', req.user.id)
     const { data, error } = await query.select().single()
     if (error) throw error
@@ -66,7 +93,10 @@ router.put('/:id', requireAuth, requireRole('instructor', 'admin'), async (req, 
 // Admin: archive course
 router.patch('/:id/archive', requireAuth, requireRole('admin'), async (req, res, next) => {
   try {
-    const { data, error } = await supabase.from('courses').update({ status: 'archived' }).eq('id', req.params.id).select().single()
+    const { data, error } = await supabase.from('courses')
+      .update({ status: 'archived' })
+      .eq('id', req.params.id)
+      .select().single()
     if (error) throw error
     res.json(data)
   } catch (err) { next(err) }

@@ -10,12 +10,18 @@ const PORT = process.env.PORT || 5000
 // Security
 app.use(helmet())
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }))
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200 }))
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }))
+
+// Tighter limits on high-value endpoints
+const strictLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false })
+app.use('/api/orders', strictLimiter)
+app.use('/api/quizzes', strictLimiter)
+app.use('/api/certificates', strictLimiter)
 
 // Webhooks need raw body — mount before express.json()
 app.use('/api/webhooks', require('./routes/webhooks'))
 
-app.use(express.json())
+app.use(express.json({ limit: '2mb' }))
 
 // Routes
 app.use('/api/users', require('./routes/users'))
@@ -31,6 +37,7 @@ app.use('/api/announcements', require('./routes/announcements'))
 app.use('/api/coupons', require('./routes/coupons'))
 app.use('/api/uploads', require('./routes/uploads'))
 app.use('/api/analytics', require('./routes/analytics'))
+app.use('/api/instructor', require('./routes/instructor'))
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }))
 

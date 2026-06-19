@@ -1,10 +1,10 @@
 const express = require('express')
 const router = express.Router()
 const { Webhook } = require('svix')
-const crypto = require('crypto')
+const stripe = require('../lib/stripe')
 const supabase = require('../lib/supabase')
 
-// Raw body for signature verification
+// Raw body — required for both Clerk and Stripe signature verification
 router.use(express.raw({ type: 'application/json' }))
 
 // Clerk webhook — sync users to Supabase
@@ -42,40 +42,37 @@ router.post('/clerk', async (req, res) => {
   res.json({ received: true })
 })
 
-// Razorpay webhook
-router.post('/razorpay', async (req, res) => {
-  const body = req.body.toString()
-  const signature = req.headers['x-razorpay-signature']
-  const expected = crypto
-    .createHmac('sha256', process.env.RAZORPAY_WEBHOOK_SECRET)
-    .update(body)
-    .digest('hex')
+// Stripe webhook
+router.post('/stripe', async (req, res) => {
+  const sig = req.headers['stripe-signature']
+  let event
 
-  if (signature !== expected) {
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET)
+  } catch {
     return res.status(400).json({ error: 'Invalid signature' })
   }
 
-  const event = JSON.parse(body)
-  const { event: eventType, payload } = event
-
-  // Handlers imported lazily to avoid circular deps
   const handlers = require('../services/webhookHandlers')
 
-  switch (eventType) {
-    case 'payment.captured':
-      await handlers.onPaymentCaptured(payload)
+  switch (event.type) {
+    case 'payment_intent.succeeded':
+      await handlers.onPaymentSucceeded(event.data.object)
       break
-    case 'payment.failed':
-      await handlers.onPaymentFailed(payload)
+    case 'payment_intent.payment_failed':
+      await handlers.onPaymentFailed(event.data.object)
       break
-    case 'refund.created':
-      await handlers.onRefundCreated(payload)
+    case 'charge.refunded':
+      await handlers.onChargeRefunded(event.data.object)
       break
-    case 'transfer.processed':
-      await handlers.onTransferProcessed(payload)
+    case 'transfer.paid':
+      await handlers.onTransferPaid(event.data.object)
       break
     case 'transfer.failed':
-      await handlers.onTransferFailed(payload)
+      await handlers.onTransferFailed(event.data.object)
+      break
+    case 'account.updated':
+      await handlers.onAccountUpdated(event.data.object)
       break
   }
 
