@@ -9,7 +9,8 @@ const PORT = process.env.PORT || 5000
 
 // Security
 app.use(helmet())
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }))
+const allowedOrigins = process.env.CLIENT_URL?.split(',').map(s => s.trim().replace(/\/$/, '')) || ['http://localhost:5173']
+app.use(cors({ origin: allowedOrigins, credentials: true }))
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }))
 
 // Tighter limits on high-value endpoints
